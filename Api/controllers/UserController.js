@@ -5,6 +5,7 @@ var bcrypt = require('bcrypt-nodejs');
 var jwt = require('../services/jwt');
 var mongoosePagination = require('mongoose-pagination');
 var fs = require('fs');
+var path = require('path');
 
 function home(req, res) {
 	res.status(200).send({message: 'Controlador funcionando'});
@@ -117,7 +118,7 @@ function updateUser(req, res){
 	});
 }
 
-function uploadImage(req, res){
+function uploadAvatar(req, res){
 	var userId = req.params.id;
 
 	if(req.files.image){
@@ -126,25 +127,42 @@ function uploadImage(req, res){
 		var fileExtension = fileName.split('\.')[1];
 
 		if(userId != req.user.sub){
-			removeFiles(res, filePath, 'No tienes permiso para actualizar los datos de este usuario.');
+			return removeFiles(res, filePath, 'No tienes permiso para actualizar los datos de este usuario.');
 		}
 
 		if(fileExtension == 'jpg' || fileExtension == 'png' || fileExtension == 'gif' || fileExtension == 'jpeg'){
-			// UserModel.findByIdAndUpdate(userId, )
-			res.status(200).send({message: 'Subida de imagen correcta.'});
+			UserModel.findByIdAndUpdate(userId, {image: fileName}, {new: true}, (err, userUpdated) => {
+				if(err) { return res.status(500).send({message: 'Error al actualizar el usuario.'}); }
+				if(!userUpdated) { return res.status(404).send({message: 'No se han recibido los datos completos'}); }
+				return res.status(200).send({user: userUpdated});
+			});
 		}
 		else {
-			removeFiles(res, filePath, 'Extensión no válida.');
+			return removeFiles(res, filePath, 'Extensión no válida.');
 		}
 	}
 	else {
-		res.status(200).send({message: 'No se ha subido ninguna imagen'});
+		return res.status(200).send({message: 'No se ha subido ninguna imagen'});
 	}
 }
 
 function removeFiles(res, filePath, message){
 	fs.unlink(filePath, err => {
 		return res.status(200).send({message: message});
+	});
+}
+
+function getAvatar(req, res){
+	var imageFile = req.params.imageFile;
+	var pathFile = './uploads/users/' + imageFile;
+
+	fs.exists(pathFile, (exists) => {
+		if(exists) {
+			res.sendFile(path.resolve(pathFile));
+		}
+		else {
+			res.status(200).send({message: 'No existe la imagen.'});
+		}
 	});
 }
 
@@ -155,5 +173,6 @@ module.exports = {
 	getOneUser,
 	getPagedUsers,
 	updateUser,
-	uploadImage
+	uploadAvatar,
+	getAvatar
 }
