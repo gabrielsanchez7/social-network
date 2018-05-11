@@ -1,6 +1,7 @@
 'use strict'
-
 var UserModel = require('../models/UserModel');
+var FollowModel = require('../models/FollowModel');
+var PublicationModel = require('../models/PublicationModel');
 var bcrypt = require('bcrypt-nodejs');
 var jwt = require('../services/jwt');
 var mongoosePagination = require('mongoose-pagination');
@@ -82,8 +83,26 @@ function getOneUser(req, res){
 	UserModel.findById(userId, (err, user) => {
 		if(err) { return res.status(500).send({message: 'Error al obtener el usuario'}); }
 		if(!user) { return res.status(404).send({message: 'El usuario no existe.'}); }
-		return res.status(200).send({user});
+        
+        followThisUser(req.user.sub, userId).then((value) => {
+            user.password = undefined;
+            return res.status(200).send({user, followed: value.followed, following: value.following});
+        });
 	});
+}
+
+async function followThisUser(identity_user_id, user_id){
+    var following = await FollowModel.findOne({user: identity_user_id, followed: user_id}).exec((err, following) => {
+        if(err) return handleError(err);
+        return following;
+    });
+    
+    var followed = await FollowModel.findOne({user: user_id, followed: identity_user_id}).exec((err, followed) => {
+        if(err) return handleError(err);
+        return followed;
+    });
+    
+    return { following: following, followed: followed };
 }
 
 function getPagedUsers(req, res){
@@ -92,13 +111,70 @@ function getPagedUsers(req, res){
 	var itemsPerPage = 5;
 	(req.params.page) ? page = this : page = 1;
 
-	UserModel.find().sort('_id').paginate(page, itemsPerPage, (err, users, total) => {
-		if(err) { return res.status(500).send({message: 'Error al obtener los usuarios paginados.'}); }
-		if(!users) { return res.status(404).send({message: 'No existen usuarios registrados.'}); }
-		return res.status(200).send({
-			users, total, pages: Math.ceil(total/itemsPerPage)
-		});
-	});
+    followUserIds(identityUserId).then((value) => {
+        UserModel.find().sort('_id').paginate(page, itemsPerPage, (err, users, total) => {
+            if(err) { return res.status(500).send({message: 'Error al obtener los usuarios paginados.'}); }
+            if(!users) { return res.status(404).send({message: 'No existen usuarios registrados.'}); }
+            return res.status(200).send({
+                users,
+                usersFollowing: value.following,
+                userFollowMe: value.followed,
+                total,
+                pages: Math.ceil(total/itemsPerPage)
+            });
+        });
+    });
+}
+
+async function followUserIds(user_id){
+    var following = await FollowModel.find({user: user_id}).select({_id: 0, __v: 0, user: 0}).exec((err, follows) => {
+        return follows;
+    });
+    
+    var followingClean = [];
+    following.forEach((follow) => {
+       followingClean.push(follow.followed); 
+    });
+    
+    var followed = await FollowModel.find({followed: user_id}).select({_id: 0, __v: 0, followed: 0}).exec((err, follows) => {
+        return follows;
+    });
+    
+    var followMeClean = [];
+    followed.forEach((follow) => {
+       followMeClean.push(follow.user); 
+    });
+    
+    return { following: followingClean, followed: followMeClean };
+}
+
+function getCounters(req, res){
+    var userId = req.user.sub;
+    if(req.params.id){
+        userId = req.params.id;
+    }
+    allCounters(userId).then((value) => {
+        return res.status(200).send(value);
+    });
+}
+
+async function allCounters(user_id){
+    var following = await FollowModel.count({user: user_id}).exec((err, count) => {
+        if(err) handleError(err);
+        return count;
+    });
+    
+    var followed = await FollowModel.count({followed: user_id}).exec((err, count) => {
+        if(err) handleError(err);
+        return count;
+    });
+    
+    var publications = await PublicationModel.count({user: user_id}).exec((err, count) => {
+        if(err) handleError(err);
+        return count;
+    });
+    
+    return { following: following, followed: followed, publications: publications };
 }
 
 function updateUser(req, res){
@@ -172,6 +248,7 @@ module.exports = {
 	loginUser,
 	getOneUser,
 	getPagedUsers,
+    getCounters,
 	updateUser,
 	uploadAvatar,
 	getAvatar
